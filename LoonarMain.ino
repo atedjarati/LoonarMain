@@ -31,34 +31,8 @@ Loonar Technologies Full Systems Code
 #include <IridiumSBD.h>            // Iridium module library
 #include <RH_RF24.h>               // Radio module library
 #include <Adafruit_MCP23008.h>     // MCP23008 GPIO Expansion chip library
-Adafruit_MCP23008 GPIO_chip;       // GPIO Expander Chip, i2c
 #include "Configuration.h"         // Loonar Technologies Configuration file. 
-
-/***********************************************************************************************************************************************************************/
-
-/********** PINOUT **********/
-const int CS_BMP =                     2;    // Chip Select Pin for the BMP280 Sensor 
-const int GFSK_GATE =                  5;    // Gate pin for power to the radio
-const int GFSK_SDN =                   6;    // Shutdown pin for the radio
-const int GFSK_GPIO2 =                 7;    // GPIO #2 pin for the radio 
-const int GFSK_GPIO3 =                 8;    // GPIO #3 pin for the radio
-const int GFSK_IRQ =                   14;   // IRQ pin for the radio
-const int VCAP_SENSE =                 A1;   // Analog input to read supercapacitor voltage
-const int RB_SLEEP =                   17;   // Iridium modem sleep pin
-const int GFSK_GPIO1 =                 20;   // GPIO #1 pin for the radio
-const int GFSK_GPIO0 =                 21;   // GPIO #0 pin for the radio
-const int GFSK_CS =                    22;   // Chip Select Pin for the radio
-const int SD_CS =                      23;   // Chip Select pin for the SD Card
-const int VBAT_SENSE =                 A11;  // Analog input to read battery voltage
-
-
-// Part of the GPIO Extender chip running on i2c
-const int GPS_GATE =                   0;    // Gate pin for power to the GPS
-const int EN_5V =                      2;    // Enable pin for the 5V Line
-const int RB_GATE =                    3;    // Gate pin for power to the RockBlock
-const int CAM_GATE =                   4;    // Gate pin for power to the camera
-const int CAM_CTRL =                   5;    // Enable pin for the camera
-const int CUT_GATE =                   6;    // Gate pin for power to cutdown
+#include "UserConfiguration.h"
 
 /***********************************************************************************************************************************************************************/
 
@@ -69,67 +43,61 @@ File                      logfile;                             // SD Card Logfil
 TinyGPSPlus               tinygps;                             // GPS Parser
 IridiumSBD                isbd(Serial2, RB_SLEEP);             // Iridium Module
 RH_RF24                   rf24(GFSK_CS, GFSK_IRQ, GFSK_SDN);   // Si4463 Radio Object
+Adafruit_MCP23008         GPIO_chip;                           // GPIO Expander Chip, i2c
+IntervalTimer             loonarInterrupt;                     // Interrupt to run all flight code independent of user code
 
 /***********************************************************************************************************************************************************************/
 
-/********** CONSTANTS **********/  
-const long     INTERVAL_TIME =                                   5000000;                      // Loop time for entire program in microseconds. 
-const double   IRIDIUM_LOOP_TIME =                               6.0;                          // Loop time for Iridium in minutes. 
-const float    SUPERCAP_MIN_LIMIT =                              4.75;                         // Minimum number of volts to charge the supercapacitor to during startup. 
-const uint8_t  BUF_SIZE =                                        100;                          // Data array size.
-const uint8_t  MSG[] = {                                                                       // Command to send to GPS for high altitude mode upon startup.
-    0xB5, 0x62, 0x06, 0x24, 0x24, 0x00, 0xFF, 0xFF, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x10, 0x27, 0x00, 0x00, 
-    0x05, 0x00, 0xFA, 0x00, 0xFA, 0x00, 0x64, 0x00, 0x2C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0xDC };
+/********** GLOBAL STRUCT **********/
+
+struct FlightData{
+  float     latitude;
+  float     longitude;
+  float     altitude;
+  float     bmp_altitude;
+  float     bmp_temperature;
+  float     temperature;
+  float     battery_voltage;
+  float     supercap_voltage;
+  boolean   cutdown;
+  double    minutes;
+  double    startTime;
+  uint8_t   finaldata[BUF_SIZE];
+} flightData;
     
 /***********************************************************************************************************************************************************************/
 
-/********** GLOBAL VARIABLES **********/
-static float          latitude =                                 0.0;     // Global variable for current gps latitude 
-static float          longitude =                                0.0;     // Global variable for current gps longitude
-static float          altitude =                                 0.0;     // Global variable for current gps altitude, in meters above sea level.
-static float          bmp_altitude =                             0.0;     // Global variable for current barometric altitude from BMP280 sensor, in meters above sea level.
-static float          bmp_temperature =                          0.0;     // Global variable for current temperature from BMP280 sensor, in degrees Celsius.
-static float          temperature =                              0.0;     // Global variable for current temperature from the radio module, in degrees Celsius.
-static double         minutes =                                  0.0;     // Global variable for the current time since startup, in minutes.
-static byte           gps_set_sucess =                           0;       // Global variable for success in setting the GPS to high altitude mode. 
-static double         startTime =                                0.0;     // Global variable to store the start time of the loop in. 
-static boolean        cutdown =                                  false;   // Global variable to store cutdown status. 
-static uint8_t        finaldata[BUF_SIZE];                                // Array to store flight variables in
-IntervalTimer         myTimer;                                            // Interrupt to run all flight code independent of user code
-    
-/***********************************************************************************************************************************************************************/
-
-void setup(){
-  init_GPIO_chip();                        // Initialize the GPIO Expansion chip over I2C with the teensy i2c library integrated already into this.
-  setPinmodes();                           // Initialize all the pinModes for every pin (i.e. input, output, etc).
-  RadioOff();                              // Shut off power to the radio.
-  IridiumOff();                            // Shut off power to the Iridium modem
-  CameraOff();                             // Shut off power to the camera.
-  FiveVOff();                              // Shut off the 5 volt line.
-  GPSOff();                                // Shut off power to the GPS.
-  CutdownOff();                            // Shut off power to cutdown. 
-  CameraDeTrigger();                       // De-trigger the camera (drive high).
-  analogReadResolution(12);                // Set the ADC resolution to 12 bits (0-4095) for maximum resolution
-  analogReference(EXTERNAL);               // Set the ADC reference voltage to the exernally supplied 3.3V reference. 
-  setupSDCard();                           // Configure the SD card and set up the log file. 
-  printLogfileHeaders();                   // Write headers to the log file.
-  init_bmp();                              // Initialize the BMP 
-  GPSOn();                                 // Turn on power to the GPS.
-  setGPSFlightMode();                      // Configure the GPS for flight mode to work at high altitudes.
-  initRF();                                // Turn on and initialize the Radio module.
-  chargeSuperCapacitor();                  // Charge the supercapacitor up.  
-  initIridium();                           // Turn on the 5 volt line, give power to the Iridium module, and begin talking to it.
-  initCameraVideo();                       // Give power to the camera, then trigger the camera line to start video. 
-  myTimer.begin(loonarCode, INTERVAL_TIME);// Start the interrupt timer. 
-  userSetupCode();                         // Call the user setup function code. 
-  startTime = millis();                    // Initializes the start time of the entire program. 
+void setup()
+{
+  init_GPIO_chip();                                  // Initialize the GPIO Expansion chip over I2C with the teensy i2c library integrated already into this.
+  setPinmodes();                                     // Initialize all the pinModes for every pin (i.e. input, output, etc).
+  RadioOff();                                        // Shut off power to the radio.
+  IridiumOff();                                      // Shut off power to the Iridium modem
+  CameraOff();                                       // Shut off power to the camera.
+  FiveVOff();                                        // Shut off the 5 volt line.
+  GPSOff();                                          // Shut off power to the GPS.
+  CutdownOff();                                      // Shut off power to cutdown. 
+  CameraDeTrigger();                                 // De-trigger the camera (drive high).
+  analogReadResolution(12);                          // Set the ADC resolution to 12 bits (0-4095) for maximum resolution
+  analogReference(EXTERNAL);                         // Set the ADC reference voltage to the externally supplied 3.3V reference. 
+  setupSDCard();                                     // Configure the SD card and set up the log file. 
+  printLogfileHeaders();                             // Write headers to the log file.
+  init_bmp();                                        // Initialize the BMP 
+  GPSOn();                                           // Turn on power to the GPS.
+  setGPSFlightMode();                                // Configure the GPS for flight mode to work at high altitudes.
+  initRF();                                          // Turn on and initialize the Radio module.
+  chargeSuperCapacitor();                            // Charge the supercapacitor up.  
+  initIridium();                                     // Turn on the 5 volt line, give power to the Iridium module, and begin talking to it.
+  initCameraVideo();                                 // Give power to the camera, then trigger the camera line to start video. 
+  userSetupCode();                                   // Call the user setup function code. 
+  loonarInterrupt.begin(loonarCode, INTERVAL_TIME);  // Start the interrupt timer. 
+  flightData.startTime = millis();                   // Initializes the start time of the entire program. 
 }
 
 /***********************************************************************************************************************************************************************/
 
-void loop(){
-  // loonarCode();
+void loop()
+{
   userLoopCode();
 }
 
@@ -144,23 +112,41 @@ void loop(){
      Nothing
    Purpose: 
      Completes all necessary flight code, including acquiring all data from the GPS and sensors, then sending 
-     this data to the radio module and the iridium module, and finally logging all data onboard. 
+     this data to the radio module and the iridium module, and finally logging all data onboard.  This function
+     gets called on an interrupt using the IntervalTimer function built into the Teensy LC. 
 --------------------------------------------------------------------------------------------------------------*/
-static void loonarCode (){
-  minutes = (double) (millis() - startTime)/1000.0/60.0;
-  getGPS();
-  getBMP();
-  getTemp();
-  configureData();
-  logStuff();
-  checkCutdown();
-  sendRF();
-  noInterrupts();
-  sendIridium();
-  interrupts();
+static void loonarCode ()
+{
+  flightData.minutes = getTime();
+  flightData.latitude = getLatitude();
+  flightData.longitude = getLongitude();
+  flightData.altitude = getAltitude();
+  flightData.bmp_temperature = bmp.readTemperature();
+  flightData.bmp_altitude = bmp.readAltitude();
+  flightData.temperature = getTemp();                     // Acquire the temperature from the built in sensor from the radio chip.
+  flightData.battery_voltage = getBatteryVoltage();
+  flightData.supercap_voltage = getSuperCapVoltage();
+  configureData();                                        // Configure the data we want to transmit via Iridium and/or RF.
+  logToSDCard();                                          // Log all data to the SD Card.
+  checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
+  transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
+  transceiveIridium();                                    // Transmit and receive telemetry via the Iridium modem. 
 }
 
-/***********************************************************************************************************************************************************************/
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     getTime
+   Parameters:
+     None
+   Returns:
+     Current time since startup of the Teensy in double format. 
+   Purpose: 
+     Acquires the current time since startup of the teensy. 
+--------------------------------------------------------------------------------------------------------------*/
+static double getTime(){
+  return (double) (millis() - flightData.startTime)/1000.0/60.0;  // Acquire the current time since startup of the Teensy.
+}
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -172,37 +158,46 @@ static void loonarCode (){
    Purpose: 
      Checks to see if the conditions are appropriate for cutdown, and if so, will cut down the balloon. 
 --------------------------------------------------------------------------------------------------------------*/
-static void checkCutdown() {
-  if (!cutdown) {
-    if (CUTDOWN_CONFIG == 1){
-      if (tinygps.location.isValid()){
-        if (altitude >= CUTDOWN_ALTITUDE) {
-          noInterrupts();
+static void checkCutdown() 
+{
+  if (!flightData.cutdown) 
+  {
+    if (CUTDOWN_CONFIG == 1)
+    {
+      if (tinygps.location.isValid())
+      {
+        if (flightData.altitude >= CUTDOWN_ALTITUDE) 
+        {
           cutdownBalloon();
-          interrupts();
         }
       }
-    } else if (CUTDOWN_CONFIG == 2){
-      if (tinygps.location.isValid()){
-        if (minutes >= CUTDOWN_TIME) {
-          noInterrupts();
+    } 
+    else if (CUTDOWN_CONFIG == 2)
+    {
+      if (tinygps.location.isValid())
+      {
+        if (flightData.minutes >= CUTDOWN_TIME) 
+        {
           cutdownBalloon();
-          interrupts();
         }
       }
-    } else if (CUTDOWN_CONFIG == 3){
-      if (tinygps.location.isValid()){
-        if ( (latitude > CUTDOWN_LATITUDE_MAX) || (latitude < CUTDOWN_LATITUDE_MIN) || (longitude > CUTDOWN_LONGITUDE_MAX) || (longitude < CUTDOWN_LONGITUDE_MIN) ) {
-          noInterrupts();
+    } 
+    else if (CUTDOWN_CONFIG == 3)
+    {
+      if (tinygps.location.isValid())
+      {
+        if ( (flightData.latitude > CUTDOWN_LATITUDE_MAX) || 
+             (flightData.latitude < CUTDOWN_LATITUDE_MIN) || 
+             (flightData.longitude > CUTDOWN_LONGITUDE_MAX) || 
+             (flightData.longitude < CUTDOWN_LONGITUDE_MIN) ) 
+        {
           cutdownBalloon();
-          interrupts();
         }
       }
     }
   }
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -214,14 +209,23 @@ static void checkCutdown() {
    Purpose: 
      Turns on the power to the cutdownr resistor and bleeds energy from the supercap until it hits 2.9V.
 --------------------------------------------------------------------------------------------------------------*/
-static void cutdownBalloon(){
+static void cutdownBalloon()
+{
+  noInterrupts();
   CutdownOn();
-  while (superCapVoltage() > 2.9);
+  double startCutdown = millis();
+  while (getSuperCapVoltage() > SUPERCAP_CUTDOWN_VOLTAGE_MIN) 
+  {
+    if ((millis() - startCutdown) > CUTDOWN_MAX_TIME)
+    {
+      break; 
+    }
+  }
   CutdownOff(); 
-  cutdown = true;
+  flightData.cutdown = true;
+  interrupts();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -233,40 +237,51 @@ static void cutdownBalloon(){
    Purpose: 
      Configures all the current global variable data and puts it in the global data array.   
 --------------------------------------------------------------------------------------------------------------*/
-static void configureData(){
+static void configureData()
+{
   char data[BUF_SIZE] = "";
-  sprintf(data, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f", latitude, longitude, altitude, bmp_altitude, bmp_temperature, temperature);
+  sprintf(data, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d", 
+    flightData.latitude, 
+    flightData.longitude, 
+    flightData.altitude, 
+    flightData.bmp_altitude, 
+    flightData.bmp_temperature, 
+    flightData.temperature,
+    flightData.battery_voltage, 
+    flightData.supercap_voltage, 
+    flightData.cutdown);
+    
   Serial.print("Final configured data: ");
-  for (int i = 0; i < BUF_SIZE; i++){
+  for (int i = 0; i < BUF_SIZE; i++)
+  {
     Serial.print(data[i]);
-    finaldata[i] = data[i];    
+    flightData.finaldata[i] = data[i];    
   } 
   Serial.println();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
-     sendRF
+     transceiveRF
    Parameters:
      None
    Returns:
      Nothing
    Purpose: 
-     Sends the current data stream to the Radio module for transmission. 
+     Sends the current data stream to the Radio module for transmission.  Also reads in any data. 
 --------------------------------------------------------------------------------------------------------------*/
-static void sendRF() {   
-  rf24.send(finaldata, sizeof(finaldata));
+static void transceiveRF() 
+{   
+  rf24.send(flightData.finaldata, sizeof(flightData.finaldata));
   rf24.waitPacketSent();
   
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
-     sendIridium
+     transceiveIridium
    Parameters:
      None
    Returns:
@@ -274,29 +289,36 @@ static void sendRF() {
    Purpose: 
      Sends the current data stream to the Iridium module for transmission. 
 --------------------------------------------------------------------------------------------------------------*/
-static void sendIridium() { 
-  if (minutes > IRIDIUM_LOOP_TIME) {
-    size_t bufferSize = sizeof(finaldata);
-    isbd.sendReceiveSBDBinary(finaldata, BUF_SIZE, finaldata, bufferSize);
+static void transceiveIridium() 
+{ 
+  noInterrupts(); // Turns off interrupts so we can transmit our message via Iridium.
+  if (flightData.minutes > IRIDIUM_LOOP_TIME) 
+  {
+    size_t bufferSize = sizeof(flightData.finaldata);
+    isbd.sendReceiveSBDBinary(flightData.finaldata, BUF_SIZE, flightData.finaldata, bufferSize);
     char rxBuf [bufferSize];
-    minutes += IRIDIUM_LOOP_TIME;
-    if (bufferSize > 0){
-      boolean shouldCutdown = false;
-      for (int i = 0; i < bufferSize; i++){
-        rxBuf[i] = finaldata[i];
-        if(rxBuf[i] != CUTDOWN_COMMAND[i]) shouldCutdown == false;
+    IRIDIUM_LOOP_TIME += IRIDIUM_LOOP_TIME;
+    if (bufferSize > 0) 
+    {
+      boolean shouldCutdown = true;
+      for (size_t i = 0; i < bufferSize; i++)
+      {
+        rxBuf[i] = flightData.finaldata[i];
+        if(rxBuf[i] != CUTDOWN_COMMAND[i]) 
+        {
+          shouldCutdown = false;
+        }
       }
-      if (shouldCutdown) {
-        noInterrupts();
+      if (shouldCutdown) 
+      {
         cutdownBalloon();
-        interrupts();
       }
-      messageReceived(finaldata);
+      messageReceived(flightData.finaldata);
     }
   }
+  interrupts(); // Turn interrupts back on. 
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -308,11 +330,11 @@ static void sendIridium() {
    Purpose: 
      Acquires the temperature reading in celsius from the radio module and stores it in respectibe global variable. 
 --------------------------------------------------------------------------------------------------------------*/
-static void getTemp() {
-  temperature = rf24.get_temperature();
+static float getTemp() 
+{
+ return rf24.get_temperature();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -324,7 +346,8 @@ static void getTemp() {
    Purpose: 
      Triggers the camera into video mode. 
 --------------------------------------------------------------------------------------------------------------*/
-static void initCameraVideo() {
+static void initCameraVideo() 
+{
   CameraOn();
   delay(1000);
   CameraTrigger();
@@ -332,7 +355,6 @@ static void initCameraVideo() {
   CameraDeTrigger();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -344,15 +366,17 @@ static void initCameraVideo() {
    Purpose: 
      Does nothing until the supercapacitor voltage hits a predetermined limit.  
 --------------------------------------------------------------------------------------------------------------*/
-static void chargeSuperCapacitor() {
-  while(superCapVoltage() <= SUPERCAP_MIN_LIMIT) {
+static void chargeSuperCapacitor() 
+{
+  while(getSuperCapVoltage() <= SUPERCAP_MIN_LIMIT) 
+  {
     delay(500);
     Serial.println("Supercap voltage:");
-    Serial.print(superCapVoltage()); Serial.println(" V");
+    Serial.print(getSuperCapVoltage()); 
+    Serial.println(" V");
   }
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -365,7 +389,8 @@ static void chargeSuperCapacitor() {
      Initializes the iridium module by attaching the serial monitor to the iridium modem, turning on the 5 volt 
      line as well as delivering power ot the iridium module, and then calling the begin function. 
 --------------------------------------------------------------------------------------------------------------*/
-static void initIridium(){
+static void initIridium()
+{
   isbd.attachConsole(Serial);
   isbd.attachDiags(Serial);
   isbd.setPowerProfile(1);
@@ -375,7 +400,6 @@ static void initIridium(){
   isbd.begin();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -390,21 +414,28 @@ static void initIridium(){
      modulation configuration to GFSK at a speed of 500bps and a bandwidth of approximately 1kHz.  Finally,
      it sets the output transmit power to +20dBm or 100mW output RF power. 
 --------------------------------------------------------------------------------------------------------------*/
-static void initRF() {
+static void initRF() 
+{
   SPI.setDataMode(SPI_MODE0);
   SPI.setClockDivider(SPI_CLOCK_DIV2);  // Setting clock speed to 8mhz, as 10 is the max for the rfm22
   SPI.begin(); 
   RadioOn();
   rf24.init(BUF_SIZE);
   uint8_t buf[8];
-  if (!rf24.command(RH_RF24_CMD_PART_INFO, 0, 0, buf, sizeof(buf))) {
+  if (!rf24.command(RH_RF24_CMD_PART_INFO, 0, 0, buf, sizeof(buf))) 
+  {
     Serial.println("SPI ERROR");
-  } else {
+  } 
+  else 
+  {
     Serial.println("SPI OK");
   }
-  if (!rf24.setFrequency(FREQ)) {
+  if (!rf24.setFrequency(FREQ)) 
+  {
     Serial.println("setFrequency failed");
-  } else {
+  } 
+  else 
+  {
     Serial.print(FREQ);
     Serial.println(" MHz.");
   }
@@ -412,7 +443,6 @@ static void initRF() {
   rf24.setTxPower(0x7f);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -424,11 +454,11 @@ static void initRF() {
    Purpose: 
      Initialize the GPIO Expander chip. 
 --------------------------------------------------------------------------------------------------------------*/
-static void init_GPIO_chip(){
+static void init_GPIO_chip()
+{
   GPIO_chip.begin();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -440,7 +470,8 @@ static void init_GPIO_chip(){
    Purpose: 
      Write the headers to the SD Card logfile. 
 --------------------------------------------------------------------------------------------------------------*/
-static void printLogfileHeaders() {
+static void printLogfileHeaders() 
+{
   logfile.print("Time (min), ");
   logfile.print("Lat,");
   logfile.print("Long, ");
@@ -453,11 +484,10 @@ static void printLogfileHeaders() {
   logfile.flush();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
-     logStuff
+     logToSDCard
    Parameters:
      None
    Returns:
@@ -465,28 +495,28 @@ static void printLogfileHeaders() {
    Purpose: 
      Logs al relevant variables to the SD card log file.  
 --------------------------------------------------------------------------------------------------------------*/
-static void logStuff() {
-  logfile.print(minutes);
+static void logToSDCard() 
+{
+  logfile.print(flightData.minutes);
   logfile.print(",");
-  logfile.print(latitude);
+  logfile.print(flightData.latitude);
   logfile.print(",");
-  logfile.print(longitude);
+  logfile.print(flightData.longitude);
   logfile.print(",");
-  logfile.print(altitude);
+  logfile.print(flightData.altitude);
   logfile.print(",");
-  logfile.print(bmp_altitude);
+  logfile.print(flightData.bmp_altitude);
   logfile.print(",");
-  logfile.print(bmp_temperature);
+  logfile.print(flightData.bmp_temperature);
   logfile.print(",");
-  logfile.print(temperature);
+  logfile.print(flightData.temperature);
   logfile.print(",");
-  logfile.print(batteryVoltage());
+  logfile.print(flightData.battery_voltage);
   logfile.print(",");
-  logfile.println(superCapVoltage());
+  logfile.println(flightData.supercap_voltage);
   logfile.flush();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -498,11 +528,11 @@ static void logStuff() {
    Purpose: 
      Initializes the BMP280 barometric pressure sensor. 
 --------------------------------------------------------------------------------------------------------------*/
-static void init_bmp() {
+static void init_bmp() 
+{
   bmp.begin();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -514,25 +544,31 @@ static void init_bmp() {
    Purpose: 
      Creates the SD Card log file.  
 --------------------------------------------------------------------------------------------------------------*/
-static void setupSDCard() {
+static void setupSDCard() 
+{
   SD.begin(SD_CS);
-  char filename[] = "LOGGER00.CSV";
-  for (uint8_t i = 0; i < 100; i++) {
-    filename[6] = i / 10 + '0';
-    filename[7] = i % 10 + '0';
-    if (! SD.exists(filename)) {   // only open a new file if it doesn't exist
+  char filename[] = "LOGGER000.CSV";
+  for (uint8_t i = 0; i < 1000; i++) 
+  {
+    filename[6] = (i / 100) + '0';
+    filename[7] = (i / 10) % 10 + '0';
+    filename[8] = (i % 10) + '0';
+    if (! SD.exists(filename)) // only open a new file if it doesn't exist
+    {   
       logfile = SD.open(filename, FILE_WRITE);
       break;  // leave the loop!
     }
   }
-  if (!logfile) {
+  if (!logfile) 
+  {
     Serial.println ("SD ERROR");
-  } else {
+  } 
+  else 
+  {
     Serial.print("Logging to: "); Serial.println(filename);
   }
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -544,7 +580,8 @@ static void setupSDCard() {
    Purpose: 
      Sets up the pinmodes for all of the control pins, ADC's, and also begins all the Serial Communication. 
 --------------------------------------------------------------------------------------------------------------*/
-static void setPinmodes(){
+static void setPinmodes()
+{
   pinMode(GFSK_GATE, OUTPUT);
   pinMode(CS_BMP, OUTPUT);
   pinMode(SD_CS, OUTPUT);
@@ -562,7 +599,6 @@ static void setPinmodes(){
   Serial2.begin(19200);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -574,11 +610,11 @@ static void setPinmodes(){
    Purpose: 
      Reads the ADC to determine the current supercapacitor voltage. 
 --------------------------------------------------------------------------------------------------------------*/
-static float superCapVoltage(){
+static float getSuperCapVoltage()
+{
   return (float)analogRead(VCAP_SENSE) * 3.3 * 2 / (double)pow(2, 12);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -590,11 +626,11 @@ static float superCapVoltage(){
    Purpose: 
      Reads the ADC to determine the current battery voltage. 
 --------------------------------------------------------------------------------------------------------------*/
-static float batteryVoltage(){
+static float getBatteryVoltage()
+{
   return (float)analogRead(VBAT_SENSE) * 3.3 * 2 / (double)pow(2, 12);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -606,11 +642,11 @@ static float batteryVoltage(){
    Purpose: 
      Delivers power to the Iridium modem.
 --------------------------------------------------------------------------------------------------------------*/
-static void IridiumOn(){
+static void IridiumOn()
+{
   GPIO_chip.digitalWrite(RB_GATE, HIGH);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -622,11 +658,11 @@ static void IridiumOn(){
    Purpose: 
      Shuts off power to the Iridium modem. 
 --------------------------------------------------------------------------------------------------------------*/
-static void IridiumOff(){
+static void IridiumOff()
+{
   GPIO_chip.digitalWrite(RB_GATE, LOW);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -638,11 +674,11 @@ static void IridiumOff(){
    Purpose: 
      Delivers power to the radio module. 
 --------------------------------------------------------------------------------------------------------------*/
-static void RadioOn(){
+static void RadioOn()
+{
   digitalWrite(GFSK_GATE, LOW);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -654,11 +690,11 @@ static void RadioOn(){
    Purpose: 
      Shuts off power to the radio module.
 --------------------------------------------------------------------------------------------------------------*/
-static void RadioOff(){
+static void RadioOff()
+{
   digitalWrite(GFSK_GATE, HIGH);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -670,11 +706,11 @@ static void RadioOff(){
    Purpose: 
      Delivers power to the GPS module.
 --------------------------------------------------------------------------------------------------------------*/
-static void GPSOn(){
+static void GPSOn()
+{
   GPIO_chip.digitalWrite(GPS_GATE, LOW);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -686,11 +722,11 @@ static void GPSOn(){
    Purpose: 
      Shuts off power to the GPS module. 
 --------------------------------------------------------------------------------------------------------------*/
-static void GPSOff(){
+static void GPSOff()
+{
   GPIO_chip.digitalWrite(GPS_GATE, HIGH);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -702,11 +738,11 @@ static void GPSOff(){
    Purpose: 
      Delivers power to the camera.
 --------------------------------------------------------------------------------------------------------------*/
-static void CameraOn(){
+static void CameraOn()
+{
   GPIO_chip.digitalWrite(CAM_GATE, LOW);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -718,11 +754,11 @@ static void CameraOn(){
    Purpose: 
      Shuts off power to the camera
 --------------------------------------------------------------------------------------------------------------*/
-static void CameraOff(){
+static void CameraOff()
+{
   GPIO_chip.digitalWrite(CAM_GATE, HIGH); 
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -734,11 +770,11 @@ static void CameraOff(){
    Purpose: 
      enables Cutdown. 
 --------------------------------------------------------------------------------------------------------------*/
-static void CutdownOn(){
+static void CutdownOn()
+{
   GPIO_chip.digitalWrite(CUT_GATE, HIGH);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -750,11 +786,11 @@ static void CutdownOn(){
    Purpose: 
      Disables cutdown
 --------------------------------------------------------------------------------------------------------------*/
-static void CutdownOff(){
+static void CutdownOff()
+{
   GPIO_chip.digitalWrite(CAM_GATE, LOW); 
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -766,11 +802,11 @@ static void CutdownOff(){
    Purpose: 
      Turn on the 5 volt line on the expansion board.
 --------------------------------------------------------------------------------------------------------------*/
-static void FiveVOn(){
+static void FiveVOn()
+{
   GPIO_chip.digitalWrite(EN_5V, HIGH);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -782,11 +818,11 @@ static void FiveVOn(){
    Purpose: 
      Turn off the 5 volt line on the expansion board.
 --------------------------------------------------------------------------------------------------------------*/
-static void FiveVOff(){
+static void FiveVOff()
+{
   GPIO_chip.digitalWrite(EN_5V, LOW);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -798,15 +834,16 @@ static void FiveVOff(){
    Purpose: 
      Send a byte array of UBX protocol to the GPS.
 --------------------------------------------------------------------------------------------------------------*/
-static void sendUBX(uint8_t len) {
-  for(int i=0; i<len; i++) {
+static void sendUBX(uint8_t len) 
+{
+  for(int i = 0; i < len; i++) 
+  {
     hsGPS.write(MSG[i]);
     Serial.print(MSG[i], HEX);
   }
   hsGPS.println();
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -818,7 +855,8 @@ static void sendUBX(uint8_t len) {
    Purpose: 
      Calculate expected UBX ACK packet and parse UBX response from GPS.
 --------------------------------------------------------------------------------------------------------------*/
-static boolean getUBX_ACK() {
+static boolean getUBX_ACK() 
+{
   uint8_t b;
   uint8_t ackByteID = 0;
   uint8_t ackPacket[10];
@@ -837,43 +875,49 @@ static boolean getUBX_ACK() {
   ackPacket[9] = 0;	 // CK_B
  
   // Calculate the checksums
-  for (uint8_t i = 2; i < 8; i++) {
+  for (uint8_t i = 2; i < 8; i++) 
+  {
     ackPacket[8] = ackPacket[8] + ackPacket[i];
     ackPacket[9] = ackPacket[9] + ackPacket[8];
   }
  
-  while (1) {
+  while (1) 
+  {
  
     // Test for success
-    if (ackByteID > 9) {
+    if (ackByteID > 9) 
+    {
       // All packets in order!
       Serial.println("GPS GOOD!");
       return true;
     }
  
     // Timeout if no valid response in 3 seconds
-    if (millis() - startTime > 3000) { 
+    if (millis() - startTime > 3000) 
+    { 
       Serial.println("GPS BAD");
       return false;
     }
  
     // Make sure data is available to read
-    if (hsGPS.available()) {
+    if (hsGPS.available()) 
+    {
       b = hsGPS.read();
  
       // Check that bytes arrive in sequence as per expected ACK packet
-      if (b == ackPacket[ackByteID]) { 
+      if (b == ackPacket[ackByteID]) 
+      { 
         ackByteID++;
         Serial.print(b, HEX);
       } 
-      else {
+      else 
+      {
         ackByteID = 0;	// Reset and look again, invalid order
       }
     }
   }
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -885,51 +929,68 @@ static boolean getUBX_ACK() {
    Purpose: 
      Sends a message to the GPS upon intialization to set it to flight mode so it works at high altitude. 
 --------------------------------------------------------------------------------------------------------------*/
-void setGPSFlightMode(){
-  while(!gps_set_sucess) {
+void setGPSFlightMode()
+{
+  static byte gps_set_success = 0;
+  while(!gps_set_success) 
+  {
     sendUBX(sizeof(MSG)/sizeof(uint8_t));
-    gps_set_sucess = getUBX_ACK();
+    gps_set_success = getUBX_ACK();
   }
-  gps_set_sucess = 0;  
+  gps_set_success = 0;  
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
-     getBMP
+     getLatitude
+   Parameters:
+     None
+   Returns:
+     Current GPS Latitude in float format
+   Purpose: 
+     Acquires the current GPS latitude.
+--------------------------------------------------------------------------------------------------------------*/
+static float getLatitude()
+{
+  smartdelay(200);
+  return tinygps.location.lat(); 
+}
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     getLongitude
+   Parameters:
+     None
+   Returns:
+     Current GPS Longitude in float format
+   Purpose: 
+     Acquires the current GPS longitude.
+--------------------------------------------------------------------------------------------------------------*/
+static float getLongitude()
+{
+  smartdelay(200);
+  return tinygps.location.lng(); 
+}
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     getAltitude
    Parameters:
      None
    Returns:
      Nothing
    Purpose: 
-     Acquires temperature and altitude from the BMP280 Barometric Pressure Sensor
+     Acquires the current GPS Altitude in meters.  
 --------------------------------------------------------------------------------------------------------------*/
-static void getBMP(){
-  bmp_temperature = bmp.readTemperature();
-  bmp_altitude = bmp.readAltitude();
+static float getAltitude()
+{
+  smartdelay(200);
+  return tinygps.altitude.meters(); 
 }
 
-/***********************************************************************************************************************************************************************/
-
-/*--------------------------------------------------------------------------------------------------------------
-   Function:
-     getGPS
-   Parameters:
-     None
-   Returns:
-     Nothing
-   Purpose: 
-     Acquires all relevant GPS data and stores them in the global variables.
---------------------------------------------------------------------------------------------------------------*/
-static void getGPS() {
-  smartdelay(500);
-  latitude = tinygps.location.lat();
-  longitude = tinygps.location.lng();
-  altitude = tinygps.altitude.meters();
-}
-
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -941,10 +1002,13 @@ static void getGPS() {
    Purpose: 
      Reads and parses the GPS datastream for the allotted time passed in.
 --------------------------------------------------------------------------------------------------------------*/
-static void smartdelay(unsigned long ms) {
+static void smartdelay(unsigned long ms) 
+{
   unsigned long timing = millis();
-  do {
-    while (hsGPS.available()) {  
+  do 
+  {
+    while (hsGPS.available()) 
+    {  
       char a = hsGPS.read();
       tinygps.encode(a);
       Serial.print(a);
@@ -952,7 +1016,6 @@ static void smartdelay(unsigned long ms) {
   } while ((millis() - timing) < ms);
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -965,11 +1028,11 @@ static void smartdelay(unsigned long ms) {
      To drive the camera control pin high to detrigger the camera control pin. After this, the camera begins
      either a photo or a video based on how long it took from the CameraTrigger function to this function.
 --------------------------------------------------------------------------------------------------------------*/
-static void CameraDeTrigger() {
+static void CameraDeTrigger() 
+{
   GPIO_chip.digitalWrite(CAM_CTRL, HIGH); 
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -983,11 +1046,11 @@ static void CameraDeTrigger() {
      The function does not handle timing.  Any parent function that calls this function is responsible for the
      tining of the control pin, in order to choose between taking a photo or a video.
 --------------------------------------------------------------------------------------------------------------*/
-static void CameraTrigger() {
+static void CameraTrigger() 
+{
   GPIO_chip.digitalWrite(CAM_CTRL, LOW); 
 }
 
-/***********************************************************************************************************************************************************************/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -999,18 +1062,12 @@ static void CameraTrigger() {
    Purpose: 
      During the iridium send function, this function will be called on an interrupt basis. 
 --------------------------------------------------------------------------------------------------------------*/
-bool isbdCallback(){
-  minutes = (double) (millis() - startTime)/1000.0/60.0;
-  getGPS();
-  getBMP();
-  getTemp();
-  configureData();
-  logStuff();
-  checkCutdown();
-  sendRF();
+bool isbdCallback()
+{
+ 
   delayMicroseconds(INTERVAL_TIME);
   return true;
 }
 
-/***********************************************************************************************************************************************************************/
+
 
