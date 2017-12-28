@@ -240,7 +240,7 @@ static void cutdownBalloon()
 static void configureData()
 {
   char data[BUF_SIZE] = "";
-  sprintf(data, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d", 
+  sprintf(data, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,", 
     flightData.latitude, 
     flightData.longitude, 
     flightData.altitude, 
