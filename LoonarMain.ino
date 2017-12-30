@@ -32,7 +32,7 @@ Loonar Technologies Full Systems Code
 #include <RH_RF24.h>               // Radio module library
 #include <Adafruit_MCP23008.h>     // MCP23008 GPIO Expansion chip library
 #include "Configuration.h"         // Loonar Technologies Configuration file. 
-#include "UserConfiguration.h"
+#include "UserConfiguration.h"     // Loonar Technologies User Configuration file. 
 
 /***********************************************************************************************************************************************************************/
 
@@ -49,7 +49,6 @@ IntervalTimer             loonarInterrupt;                     // Interrupt to r
 /***********************************************************************************************************************************************************************/
 
 /********** GLOBAL STRUCT **********/
-
 struct FlightData{
   float     latitude;
   float     longitude;
@@ -63,10 +62,81 @@ struct FlightData{
   double    minutes;
   double    startTime;
   uint8_t   finaldata[BUF_SIZE];
+  long      counter;
 } flightData;
     
 /***********************************************************************************************************************************************************************/
 
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     userSetupCode
+   Parameters:
+     None
+   Returns:
+     Nothing
+   Purpose: 
+     This is where the user can input his/her own setup functions.  You should treat this function as you would
+     a regular Arduino setup() function.  DO NOT add code to the regular setup() function.  
+--------------------------------------------------------------------------------------------------------------*/
+void userSetupCode(){
+
+ // YOUR SETUP CODE HERE!!!! 
+  
+}
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     userLoopCode()
+   Parameters:
+     None
+   Returns:
+     Nothing
+   Purpose: 
+     This is where the user can input his/her own loop functions.  You should treat this function as you would
+     a regular Arduino loop() function.  DO NOT add code to the regular loop() function.  
+--------------------------------------------------------------------------------------------------------------*/
+void userLoopCode(){
+  
+ // YOUR LOOP CODE HERE!!!! 
+  
+}
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     messageReceived
+   Parameters:
+     finaldata[] array that represents the received message 
+   Returns:
+     Nothing
+   Purpose: 
+     If there is a received message from the ground to either the radio module or the satellite modem, this 
+     function will be called.  Therefore, place any code that you would like to respond to a received message
+     in this function. Right now, all it does is print the received data. 
+--------------------------------------------------------------------------------------------------------------*/
+void messageReceived(uint8_t finaldata[]){
+ 
+ // YOUR CODE BASED ON RECEIVED DATA HERE
+ 
+ for (int i = 0; i < sizeof(finaldata); i++)
+ {
+   Serial.print((char)finaldata[i]); 
+ }
+ Serial.println();
+}
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     setup
+   Parameters:
+     None
+   Returns:
+     Nothing
+   Purpose: 
+     Completes all necessary setup functions in order to prepare the electronics for flight. 
+--------------------------------------------------------------------------------------------------------------*/
 void setup()
 {
   init_GPIO_chip();                                  // Initialize the GPIO Expansion chip over I2C with the teensy i2c library integrated already into this.
@@ -92,10 +162,22 @@ void setup()
   userSetupCode();                                   // Call the user setup function code. 
   loonarInterrupt.begin(loonarCode, INTERVAL_TIME);  // Start the interrupt timer. 
   flightData.startTime = millis();                   // Initializes the start time of the entire program. 
+  flightData.counter = 0;                            // Initialize the transmit counter to zero.
 }
 
 /***********************************************************************************************************************************************************************/
 
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     loop
+   Parameters:
+     None
+   Returns:
+     Nothing
+   Purpose: 
+     Only calls the loop function provided by the user. If the user loop function is empty, nothing will be called.
+     All Loonar technologies code is operated on an interrupt and not in the loop. 
+--------------------------------------------------------------------------------------------------------------*/
 void loop()
 {
   userLoopCode();
@@ -117,16 +199,16 @@ void loop()
 --------------------------------------------------------------------------------------------------------------*/
 static void loonarCode ()
 {
-  flightData.minutes = getTime();
-  flightData.latitude = getLatitude();
-  flightData.longitude = getLongitude();
-  flightData.altitude = getAltitude();
-  flightData.bmp_temperature = bmp.readTemperature();
-  flightData.bmp_altitude = bmp.readAltitude();
+  flightData.minutes = getTime();                         // Acquire the current time since startup of the electronics. 
+  flightData.latitude = getLatitude();                    // Parse the latitude data from the GPS.
+  flightData.longitude = getLongitude();                  // Parse the longitude data from the GPS. 
+  flightData.altitude = getAltitude();                    // Parse the altitude data from the GPS.
+  flightData.bmp_temperature = bmp.readTemperature();     // Read the temperature from the BMP280 sensor. 
+  flightData.bmp_altitude = bmp.readAltitude();           // Read the altitude from the BMP280 pressure sensor.
   flightData.temperature = getTemp();                     // Acquire the temperature from the built in sensor from the radio chip.
-  flightData.battery_voltage = getBatteryVoltage();
-  flightData.supercap_voltage = getSuperCapVoltage();
-  configureData();                                        // Configure the data we want to transmit via Iridium and/or RF.
+  flightData.battery_voltage = getBatteryVoltage();       // Measure the voltage of the batteries. 
+  flightData.supercap_voltage = getSuperCapVoltage();     // Measure the voltage of the expansion board supercapacitor. 
+  getConfiguredData();                                    // Configure the data we want to transmit via Iridium and/or RF.
   logToSDCard();                                          // Log all data to the SD Card.
   checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
   transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
@@ -145,7 +227,7 @@ static void loonarCode ()
      Acquires the current time since startup of the teensy. 
 --------------------------------------------------------------------------------------------------------------*/
 static double getTime(){
-  return (double) (millis() - flightData.startTime)/1000.0/60.0;  // Acquire the current time since startup of the Teensy.
+  return (double) (millis() - flightData.startTime)/1000.0/60.0;  // Acquire the current time since startup of the electronics. 
 }
 
 /*--------------------------------------------------------------------------------------------------------------
@@ -237,7 +319,7 @@ static void cutdownBalloon()
    Purpose: 
      Configures all the current global variable data and puts it in the global data array.   
 --------------------------------------------------------------------------------------------------------------*/
-static void configureData()
+static void getConfiguredData()
 {
   char data[BUF_SIZE] = "";
   sprintf(data, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,", 
@@ -258,6 +340,7 @@ static void configureData()
     flightData.finaldata[i] = data[i];    
   } 
   Serial.println();
+  flightData.counter++;
 }
 
 
@@ -269,13 +352,24 @@ static void configureData()
    Returns:
      Nothing
    Purpose: 
-     Sends the current data stream to the Radio module for transmission.  Also reads in any data. 
+     Sends the current data stream to the Radio module for transmission.  Also reads in any data and calls the
+     messageReceived function whenever incoming data is detected.   
 --------------------------------------------------------------------------------------------------------------*/
 static void transceiveRF() 
 {   
+  if ((flightData.counter % FCC_ID_INTERVAL) == 0)
+  {
+    rf24.send(FCCID, sizeof(FCCID));
+    rf24.waitPacketSent(); 
+  }
   rf24.send(flightData.finaldata, sizeof(flightData.finaldata));
   rf24.waitPacketSent();
-  
+  uint8_t data[BUF_SIZE] = {0};
+  uint8_t leng = BUF_SIZE;
+  if (rf24.recv(data, &leng))
+  {
+    messageReceived(data); 
+  }
 }
 
 
