@@ -23,16 +23,16 @@ Loonar Technologies Full Systems Code
 /********* LIBRARIES *********/
 #include <stdio.h>                 // Standard library
 #include <SD.h>                    // SD Card library
-#include <TinyGPS++.h>             // GPS Parser Library
+#include "TinyGPSPlusPlus.h"       // GPS Parser Library
 #include <SPI.h>                   // Serial Peripheral Interface Library
-#include <i2c_t3.h>                // Teensy I2C Library
-#include <Adafruit_Sensor.h>       // Adafruit sensor libraries
-#include <Adafruit_BMP280.h>       // BMP280 Library
-#include <IridiumSBD.h>            // Iridium module library
-#include <RH_RF24.h>               // Radio module library
-#include <Adafruit_MCP23008.h>     // MCP23008 GPIO Expansion chip library
-#include "Configuration.h"         // Loonar Technologies Configuration file. 
-#include "UserConfiguration.h"     // Loonar Technologies User Configuration file. 
+#include "i2ct3.h"                 // Teensy I2C Library
+#include "AdafruitSensor.h"        // Adafruit sensor libraries
+#include "AdafruitBMP280.h"        // BMP280 Library
+#include "Iridium_SBD.h"           // Iridium module library
+#include "RHRF24.h"                // Radio module library
+#include "AdafruitMCP23008.h"      // MCP23008 GPIO Expansion chip library
+#include "ConfigSettings.h"        // Loonar Technologies Configuration file. 
+#include "Configuration_Main.h"    // Loonar Technologies User Configuration file. 
 
 /***********************************************************************************************************************************************************************/
 
@@ -119,7 +119,7 @@ void messageReceived(uint8_t finaldata[]){
  
  // YOUR CODE BASED ON RECEIVED DATA HERE
  
- for (int i = 0; i < sizeof(finaldata); i++)
+ for (uint16_t i = 0; i < sizeof(finaldata); i++)
  {
    Serial.print((char)finaldata[i]); 
  }
@@ -514,27 +514,9 @@ static void initRF()
   SPI.setClockDivider(SPI_CLOCK_DIV2);  // Setting clock speed to 8mhz, as 10 is the max for the rfm22
   SPI.begin(); 
   RadioOn();
-  rf24.init(BUF_SIZE);
-  uint8_t buf[8];
-  if (!rf24.command(RH_RF24_CMD_PART_INFO, 0, 0, buf, sizeof(buf))) 
-  {
-    Serial.println("SPI ERROR");
-  } 
-  else 
-  {
-    Serial.println("SPI OK");
-  }
-  if (!rf24.setFrequency(FREQ)) 
-  {
-    Serial.println("setFrequency failed");
-  } 
-  else 
-  {
-    Serial.print(FREQ);
-    Serial.println(" MHz.");
-  }
-  rf24.setModemConfig(rf24.GFSK_Rb0_5Fd1);
-  rf24.setTxPower(0x7f);
+  boolean ok = rf24.init(BUF_SIZE);
+  if (!ok) Serial.println("Unplug and replug the Loonar Mainboard");
+  rf24.setFrequency(FREQ); 
 }
 
 
@@ -686,7 +668,7 @@ static void setPinmodes()
   GPIO_chip.pinMode(CAM_GATE,OUTPUT);
   GPIO_chip.pinMode(CAM_CTRL,OUTPUT);
   GPIO_chip.pinMode(CUT_GATE,OUTPUT);
-  GPIO_chip.pinMode(BREAKOUT_5,OUTPUT);
+  //GPIO_chip.pinMode(BREAKOUT_5,OUTPUT);
   pinMode(VCAP_SENSE, INPUT);
   pinMode(VBAT_SENSE, INPUT);
   hsGPS.begin(9600);
@@ -771,6 +753,7 @@ static void IridiumOff()
 static void RadioOn()
 {
   digitalWrite(GFSK_GATE, LOW);
+  delay(1000);
 }
 
 
