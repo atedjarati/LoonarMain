@@ -1,22 +1,30 @@
-
-/********************************************************
+/*
 Loonar Technologies Full Systems Code
  
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+Copyright 2018 Loonar Technologies, LLC
 
-********************************************************/
+      THIS SOFTWARE IS PRESENTED WITH THE MIT LICENCE:
+
+* Permission is hereby granted, free of charge, to any person 
+* obtaining a copy of this software and associated documentation 
+* files (the "Software"), to deal in the Software without 
+* restriction, including without limitation the rights to use, 
+* copy, modify, merge, publish, distribute, sublicense, and/or 
+* sell copies of the Software, and to permit persons to whom the 
+* Software is furnished to do so, subject to the following conditions:
+
+* The above copyright notice and this permission notice shall be included 
+* in all copies or substantial portions of the Software.
+
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
+* OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. 
+* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR 
+* ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF 
+* CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+* WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+*/
 
 /***********************************************************************************************************************************************************************/
 
@@ -48,24 +56,29 @@ IntervalTimer             loonarInterrupt;                     // Interrupt to r
 
 /***********************************************************************************************************************************************************************/
 
-/********** GLOBAL STRUCT **********/
+/********** GLOBAL DATA STRUCT **********/
 struct FlightData{
   float     latitude;
   float     longitude;
   float     altitude;
+  float     max_altitude;
   float     bmp_altitude;
   float     bmp_temperature;
   float     temperature;
   float     battery_voltage;
   float     supercap_voltage;
   boolean   cutdown;
+  boolean   landed;
   double    minutes;
   double    startTime;
+  double    iridiumTime;
   uint8_t   finaldata[BUF_SIZE];
   long      counter;
 } flightData;
     
 /***********************************************************************************************************************************************************************/
+
+/********** FUNCTIONS **********/
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
@@ -115,11 +128,11 @@ void userLoopCode(){
      function will be called.  Therefore, place any code that you would like to respond to a received message
      in this function. Right now, all it does is print the received data. 
 --------------------------------------------------------------------------------------------------------------*/
-void messageReceived(uint8_t finaldata[]){
+void messageReceived (uint8_t finaldata[], uint8_t leng){
  
  // YOUR CODE BASED ON RECEIVED DATA HERE
  
- for (uint16_t i = 0; i < sizeof(finaldata); i++)
+ for (uint16_t i = 0; i < leng; i++)
  {
    Serial.print((char)finaldata[i]); 
  }
@@ -148,11 +161,24 @@ void setup()
   GPSOff();                                          // Shut off power to the GPS.
   CutdownOff();                                      // Shut off power to cutdown. 
   CameraDeTrigger();                                 // De-trigger the camera (drive high).
-  analogReadResolution(12);                          // Set the ADC resolution to 12 bits (0-4095) for maximum resolution
+  analogReadResolution(ADC_RESOLUTION);              // Set the ADC resolution to appropriate number of bits for maximum resolution
   analogReference(EXTERNAL);                         // Set the ADC reference voltage to the externally supplied 3.3V reference. 
+  checkCallsign();                                   // Make sure user entered a correct FCC Callsign. 
+  flightData.latitude = LAUNCH_LATITUDE;             // Initialize flight data structure latitude float to the launch site latitude. 
+  flightData.longitude = LAUNCH_LONGITUDE;           // Initialize flight data structure longitude float to the launch site longitude. 
+  flightData.altitude = 0.0;                         // Initialize flight data structure altitude float to 0 meters. 
+  flightData.max_altitude = 0.0;                     // Initialize flight data structure maximum altitude float to 0 meters.
+  flightData.temperature = 0.0;                      // Initialize flight data structure temperature float to 0 celsius.
+  flightData.battery_voltage = 0.0;                  // Initialize flight data structure battery voltage float to 0.0 V.
+  flightData.supercap_voltage = 0.0;                 // Initialize flight data structure supercapacitor voltage float to 0.0 V.
+  flightData.cutdown = false;                        // Initialize flight data structure cutdown boolean to false.
+  flightData.landed = false;                         // Initialize flight data structure landed boolean to false.
+  flightData.minutes = 0.0;                          // Initialize flight data structure minutes double to 0 minutes.
+  flightData.iridiumTime = 1.0;                      // Initialize flight data structure first iridium time to 1 minute. 
+  flightData.counter = 0;                            // Initialize the transmit counter to 0.
   setupSDCard();                                     // Configure the SD card and set up the log file. 
   printLogfileHeaders();                             // Write headers to the log file.
-  init_bmp();                                        // Initialize the BMP 
+  init_bmp();                                        // Initialize the BMP 280 Pressure/Temperature sensor.
   GPSOn();                                           // Turn on power to the GPS.
   setGPSFlightMode();                                // Configure the GPS for flight mode to work at high altitudes.
   initRF();                                          // Turn on and initialize the Radio module.
@@ -160,9 +186,8 @@ void setup()
   initIridium();                                     // Turn on the 5 volt line, give power to the Iridium module, and begin talking to it.
   initCameraVideo();                                 // Give power to the camera, then trigger the camera line to start video. 
   userSetupCode();                                   // Call the user setup function code. 
-  loonarInterrupt.begin(loonarCode, INTERVAL_TIME);  // Start the interrupt timer. 
   flightData.startTime = millis();                   // Initializes the start time of the entire program. 
-  flightData.counter = 0;                            // Initialize the transmit counter to zero.
+  loonarInterrupt.begin(loonarCode, INTERVAL_TIME);  // Start the interrupt timer to run the entire loonar technologies program. 
 }
 
 /***********************************************************************************************************************************************************************/
@@ -203,6 +228,10 @@ static void loonarCode ()
   flightData.latitude = getLatitude();                    // Parse the latitude data from the GPS.
   flightData.longitude = getLongitude();                  // Parse the longitude data from the GPS. 
   flightData.altitude = getAltitude();                    // Parse the altitude data from the GPS.
+  if (flightData.altitude > flightData.max_altitude)
+  {
+    flightData.max_altitude = flightData.altitude;
+  }
   flightData.bmp_temperature = bmp.readTemperature();     // Read the temperature from the BMP280 sensor. 
   flightData.bmp_altitude = bmp.readAltitude();           // Read the altitude from the BMP280 pressure sensor.
   flightData.temperature = getTemp();                     // Acquire the temperature from the built in sensor from the radio chip.
@@ -210,6 +239,7 @@ static void loonarCode ()
   flightData.supercap_voltage = getSuperCapVoltage();     // Measure the voltage of the expansion board supercapacitor. 
   getConfiguredData();                                    // Configure the data we want to transmit via Iridium and/or RF.
   logToSDCard();                                          // Log all data to the SD Card.
+  printToSerial();
   checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
   transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
   transceiveIridium();                                    // Transmit and receive telemetry via the Iridium modem. 
@@ -230,6 +260,30 @@ static double getTime(){
   return (double) (millis() - flightData.startTime)/1000.0/60.0;  // Acquire the current time since startup of the electronics. 
 }
 
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     checkCallsign
+   Parameters:
+     None
+   Returns:
+     None
+   Purpose: 
+     Makes sure user has inputted a FCC Callsign other than the default. 
+--------------------------------------------------------------------------------------------------------------*/
+static void checkCallsign()
+{
+  if (FCCID[0] == 'A' &&
+      FCCID[1] == 'B' &&
+      FCCID[2] == 'C' &&
+      FCCID[3] == 'D' &&
+      FCCID[4] == 'E' &&
+      FCCID[5] == 'F')
+  {
+    Serial.println("Please enter a valid FCC Callsign ID in the user configuration file and reupload the code.");
+  }
+}
+
 /*--------------------------------------------------------------------------------------------------------------
    Function:
      checkCutdown
@@ -244,7 +298,7 @@ static void checkCutdown()
 {
   if (!flightData.cutdown) 
   {
-    if (CUTDOWN_CONFIG == 1)
+    if (CUTDOWN_CONFIG == 1 || CUTDOWN_CONFIG == 5)
     {
       if (tinygps.location.isValid())
       {
@@ -254,7 +308,7 @@ static void checkCutdown()
         }
       }
     } 
-    else if (CUTDOWN_CONFIG == 2)
+    if (CUTDOWN_CONFIG == 2 || CUTDOWN_CONFIG == 5)
     {
       if (tinygps.location.isValid())
       {
@@ -264,7 +318,7 @@ static void checkCutdown()
         }
       }
     } 
-    else if (CUTDOWN_CONFIG == 3)
+    if (CUTDOWN_CONFIG == 3 || CUTDOWN_CONFIG == 5)
     {
       if (tinygps.location.isValid())
       {
@@ -293,19 +347,21 @@ static void checkCutdown()
 --------------------------------------------------------------------------------------------------------------*/
 static void cutdownBalloon()
 {
-  noInterrupts();
-  CutdownOn();
-  double startCutdown = millis();
-  while (getSuperCapVoltage() > SUPERCAP_CUTDOWN_VOLTAGE_MIN) 
-  {
-    if ((millis() - startCutdown) > CUTDOWN_MAX_TIME)
+  if (!flightData.cutdown) {
+    noInterrupts();
+    CutdownOn();
+    double startCutdown = millis();
+    while (getSuperCapVoltage() > SUPERCAP_CUTDOWN_VOLTAGE_MIN) 
     {
-      break; 
+      if ((millis() - startCutdown) > CUTDOWN_MAX_TIME)
+      {
+        break; 
+      }
     }
+    CutdownOff(); 
+    flightData.cutdown = true;
+    interrupts();
   }
-  CutdownOff(); 
-  flightData.cutdown = true;
-  interrupts();
 }
 
 
@@ -322,7 +378,7 @@ static void cutdownBalloon()
 static void getConfiguredData()
 {
   char data[BUF_SIZE] = "";
-  sprintf(data, "%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,", 
+  sprintf(data, "%.4f, %.4f, %.1f, %.1f, %.1f, %.1f, %.1f, %.1f, %d, %d, %ld,,", 
     flightData.latitude, 
     flightData.longitude, 
     flightData.altitude, 
@@ -331,9 +387,11 @@ static void getConfiguredData()
     flightData.temperature,
     flightData.battery_voltage, 
     flightData.supercap_voltage, 
-    flightData.cutdown);
-    
-  Serial.print("Final configured data: ");
+    flightData.cutdown,
+    flightData.landed,
+    flightData.counter);
+  
+  Serial.print("Final configured data before transmission: ");
   for (int i = 0; i < BUF_SIZE; i++)
   {
     Serial.print(data[i]);
@@ -359,16 +417,16 @@ static void transceiveRF()
 {   
   if ((flightData.counter % FCC_ID_INTERVAL) == 0)
   {
-    rf24.send(FCCID, sizeof(FCCID));
+    rf24.send(FCCID, arr_len(FCCID));
     rf24.waitPacketSent(); 
   }
-  rf24.send(flightData.finaldata, sizeof(flightData.finaldata));
+  rf24.send(flightData.finaldata, arr_len(flightData.finaldata));
   rf24.waitPacketSent();
   uint8_t data[BUF_SIZE] = {0};
   uint8_t leng = BUF_SIZE;
   if (rf24.recv(data, &leng))
   {
-    messageReceived(data); 
+    messageReceived(data, leng); 
   }
 }
 
@@ -386,12 +444,12 @@ static void transceiveRF()
 static void transceiveIridium() 
 { 
   noInterrupts(); // Turns off interrupts so we can transmit our message via Iridium.
-  if (flightData.minutes > IRIDIUM_LOOP_TIME) 
+  if (flightData.minutes > flightData.iridiumTime) 
   {
-    size_t bufferSize = sizeof(flightData.finaldata);
+    size_t bufferSize = arr_len(flightData.finaldata);
     isbd.sendReceiveSBDBinary(flightData.finaldata, BUF_SIZE, flightData.finaldata, bufferSize);
     char rxBuf [bufferSize];
-    IRIDIUM_LOOP_TIME += IRIDIUM_LOOP_TIME;
+    flightData.iridiumTime += IRIDIUM_LOOP_TIME;
     if (bufferSize > 0) 
     {
       boolean shouldCutdown = true;
@@ -403,11 +461,11 @@ static void transceiveIridium()
           shouldCutdown = false;
         }
       }
-      if (shouldCutdown) 
+      if (shouldCutdown && (CUTDOWN_CONFIG == 4 || CUTDOWN_CONFIG == 5)) 
       {
         cutdownBalloon();
       }
-      messageReceived(flightData.finaldata);
+      messageReceived(flightData.finaldata, (uint8_t)bufferSize);
     }
   }
   interrupts(); // Turn interrupts back on. 
@@ -552,11 +610,17 @@ static void printLogfileHeaders()
   logfile.print("Lat,");
   logfile.print("Long, ");
   logfile.print("Alt (m), ");
+  logfile.print("Max Alt (m), ");
   logfile.print("Alt_Bar (m), ");
   logfile.print("Temp_Bar (C), ");
   logfile.print("Temp (C), ");
   logfile.print("BatV (V), ");
-  logfile.println("CapV (V)");
+  logfile.print("CapV (V)");
+  logfile.print("Cutdown");
+  logfile.print("Landed");
+  logfile.print("Start Time (ms)");
+  logfile.print("Irid Time (min)");
+  logfile.println("RF Count");
   logfile.flush();
 }
 
@@ -569,10 +633,10 @@ static void printLogfileHeaders()
    Returns:
      Nothing
    Purpose: 
-     Logs al relevant variables to the SD card log file.  
+     Logs all relevant variables to the SD card log file.  
 --------------------------------------------------------------------------------------------------------------*/
 static void logToSDCard() 
-{
+{ 
   logfile.print(flightData.minutes);
   logfile.print(",");
   logfile.print(flightData.latitude);
@@ -580,6 +644,8 @@ static void logToSDCard()
   logfile.print(flightData.longitude);
   logfile.print(",");
   logfile.print(flightData.altitude);
+  logfile.print(",");
+  logfile.print(flightData.max_altitude);
   logfile.print(",");
   logfile.print(flightData.bmp_altitude);
   logfile.print(",");
@@ -589,8 +655,76 @@ static void logToSDCard()
   logfile.print(",");
   logfile.print(flightData.battery_voltage);
   logfile.print(",");
-  logfile.println(flightData.supercap_voltage);
+  logfile.print(flightData.supercap_voltage);
+  logfile.print(",");
+  logfile.print(flightData.cutdown);
+  logfile.print(",");
+  logfile.print(flightData.landed);
+  logfile.print(",");
+  logfile.print(flightData.startTime);
+  logfile.print(",");
+  logfile.print(flightData.iridiumTime);
+  logfile.print(",");
+  logfile.println(flightData.counter);
   logfile.flush();
+}
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     printToSerial
+   Parameters:
+     None
+   Returns:
+     Nothing
+   Purpose: 
+     Prints all relevant flight data to the Serial Monitor. 
+--------------------------------------------------------------------------------------------------------------*/
+static void printToSerial() {
+  Serial.print("Time: ");
+  Serial.print(flightData.minutes);
+  Serial.print(", ");
+  Serial.print("Lat: ");
+  Serial.print(flightData.latitude);
+  Serial.print(", ");
+  Serial.print("Long: ");
+  Serial.print(flightData.longitude);
+  Serial.print(", ");
+  Serial.print("Alt: ");
+  Serial.print(flightData.altitude);
+  Serial.print(", ");
+  Serial.print("Max Alt: ");
+  Serial.print(flightData.max_altitude);
+  Serial.print(", ");
+  Serial.print("BMP Alt: ");
+  Serial.print(flightData.bmp_altitude);
+  Serial.print(", ");
+  Serial.print("BMP Temp: ");
+  Serial.print(flightData.bmp_temperature);
+  Serial.print(", ");
+  Serial.print("Temp: ");
+  Serial.print(flightData.temperature);
+  Serial.print(", ");
+  Serial.print("BatV: ");
+  Serial.print(flightData.battery_voltage);
+  Serial.print(", ");
+  Serial.print("CapV: ");
+  Serial.print(flightData.supercap_voltage);
+  Serial.print(", ");
+  Serial.print("Cut: ");
+  Serial.print(flightData.cutdown);
+  Serial.print(", ");
+  Serial.print("Land: ");
+  Serial.print(flightData.landed);
+  Serial.print(", ");
+  Serial.print("Start: ");
+  Serial.print(flightData.startTime);
+  Serial.print(", ");
+  Serial.print("Iridium: ");
+  Serial.print(flightData.iridiumTime);
+  Serial.print(", ");
+  Serial.print("RF Count: ");
+  Serial.println(flightData.counter);
 }
 
 
@@ -688,7 +822,7 @@ static void setPinmodes()
 --------------------------------------------------------------------------------------------------------------*/
 static float getSuperCapVoltage()
 {
-  return (float)analogRead(VCAP_SENSE) * 3.3 * 2 / (double)pow(2, 12);
+  return (float)analogRead(VCAP_SENSE) * 3.3 * 2.0 / (double)pow(2, ADC_RESOLUTION);
 }
 
 
@@ -704,7 +838,7 @@ static float getSuperCapVoltage()
 --------------------------------------------------------------------------------------------------------------*/
 static float getBatteryVoltage()
 {
-  return (float)analogRead(VBAT_SENSE) * 3.3 * 2 / (double)pow(2, 12);
+  return (float)analogRead(VBAT_SENSE) * 3.3 * 2.0 / (double)pow(2, ADC_RESOLUTION);
 }
 
 
@@ -721,6 +855,7 @@ static float getBatteryVoltage()
 static void IridiumOn()
 {
   GPIO_chip.digitalWrite(RB_GATE, HIGH);
+  delay(100);
 }
 
 
@@ -737,6 +872,7 @@ static void IridiumOn()
 static void IridiumOff()
 {
   GPIO_chip.digitalWrite(RB_GATE, LOW);
+  delay(100);
 }
 
 
@@ -753,7 +889,7 @@ static void IridiumOff()
 static void RadioOn()
 {
   digitalWrite(GFSK_GATE, LOW);
-  delay(1000);
+  delay(100);
 }
 
 
@@ -770,6 +906,7 @@ static void RadioOn()
 static void RadioOff()
 {
   digitalWrite(GFSK_GATE, HIGH);
+  delay(100);
 }
 
 
@@ -786,6 +923,7 @@ static void RadioOff()
 static void GPSOn()
 {
   GPIO_chip.digitalWrite(GPS_GATE, LOW);
+  delay(100);
 }
 
 
@@ -802,6 +940,7 @@ static void GPSOn()
 static void GPSOff()
 {
   GPIO_chip.digitalWrite(GPS_GATE, HIGH);
+  delay(100);
 }
 
 
@@ -818,6 +957,7 @@ static void GPSOff()
 static void CameraOn()
 {
   GPIO_chip.digitalWrite(CAM_GATE, LOW);
+  delay(100);
 }
 
 
@@ -834,6 +974,7 @@ static void CameraOn()
 static void CameraOff()
 {
   GPIO_chip.digitalWrite(CAM_GATE, HIGH); 
+  delay(100);
 }
 
 
@@ -850,6 +991,7 @@ static void CameraOff()
 static void CutdownOn()
 {
   GPIO_chip.digitalWrite(CUT_GATE, HIGH);
+  delay(100);
 }
 
 
@@ -866,6 +1008,7 @@ static void CutdownOn()
 static void CutdownOff()
 {
   GPIO_chip.digitalWrite(CAM_GATE, LOW); 
+  delay(100);
 }
 
 
@@ -882,6 +1025,7 @@ static void CutdownOff()
 static void FiveVOn()
 {
   GPIO_chip.digitalWrite(EN_5V, HIGH);
+  delay(100);
 }
 
 
@@ -898,6 +1042,7 @@ static void FiveVOn()
 static void FiveVOff()
 {
   GPIO_chip.digitalWrite(EN_5V, LOW);
+  delay(100);
 }
 
 
@@ -1030,7 +1175,7 @@ void setGPSFlightMode()
 --------------------------------------------------------------------------------------------------------------*/
 static float getLatitude()
 {
-  smartdelay(200);
+  smartdelay(GPS_ACQUISITION_TIME);
   return tinygps.location.lat(); 
 }
 
@@ -1047,7 +1192,7 @@ static float getLatitude()
 --------------------------------------------------------------------------------------------------------------*/
 static float getLongitude()
 {
-  smartdelay(200);
+  smartdelay(GPS_ACQUISITION_TIME);
   return tinygps.location.lng(); 
 }
 
@@ -1064,7 +1209,7 @@ static float getLongitude()
 --------------------------------------------------------------------------------------------------------------*/
 static float getAltitude()
 {
-  smartdelay(200);
+  smartdelay(GPS_ACQUISITION_TIME);
   return tinygps.altitude.meters(); 
 }
 
@@ -1141,7 +1286,7 @@ static void CameraTrigger()
 --------------------------------------------------------------------------------------------------------------*/
 bool isbdCallback()
 {
- 
+
   delayMicroseconds(INTERVAL_TIME);
   return true;
 }
