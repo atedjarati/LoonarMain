@@ -57,9 +57,10 @@ const int CUT_GATE =                   6;    // Gate pin for power to cutdown
 /***********************************************************************************************************************************************************************/
 
 /********** CONSTANTS **********/  
-const double   IRIDIUM_LOOP_TIME =                               6.0;                          // Loop time for Iridium in minutes. 
+      double   IRIDIUM_LOOP_TIME =                               6.0;                          // Loop time for Iridium in minutes. 
+      long     INTERVAL_TIME =                                   5000000;                      // Loop time for entire program in microseconds. 
+const char     LANDED_COMMAND[] =                                {"Landed"};                   // Landed Command to be sent over radio/iridium communications for low power mode.
 const uint8_t  ADC_RESOLUTION =                                  12;                           // ADC Resolution in bits.
-const long     INTERVAL_TIME =                                   5000000;                      // Loop time for entire program in microseconds. 
 const uint8_t  FCC_ID_INTERVAL =                                 10;                           // Every 'x' number of messages, we send our FCC ID. 
 const float    SUPERCAP_MIN_LIMIT =                              4.50;                         // Minimum number of volts to charge the supercapacitor to during startup. 
 const uint8_t  BUF_SIZE =                                        100;                          // Data array size for telemetry in bytes. 

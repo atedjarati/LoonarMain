@@ -60,8 +60,10 @@ IntervalTimer             loonarInterrupt;                     // Interrupt to r
 struct FlightData{
   float     latitude;
   float     longitude;
+  float     last_altitude;
   float     altitude;
   float     max_altitude;
+  float     ascent_rate;
   float     bmp_altitude;
   float     bmp_temperature;
   float     temperature;
@@ -166,7 +168,9 @@ void setup()
   checkCallsign();                                   // Make sure user entered a correct FCC Callsign. 
   flightData.latitude = LAUNCH_LATITUDE;             // Initialize flight data structure latitude float to the launch site latitude. 
   flightData.longitude = LAUNCH_LONGITUDE;           // Initialize flight data structure longitude float to the launch site longitude. 
+  flightData.last_altitude = 0.0;                    // Initialize flight data structure last altitude float to 0 meters.
   flightData.altitude = 0.0;                         // Initialize flight data structure altitude float to 0 meters. 
+  flightData.ascent_rate = 0.0;                       // Initialize flight data structure ascent rate float to 0 m/s.
   flightData.max_altitude = 0.0;                     // Initialize flight data structure maximum altitude float to 0 meters.
   flightData.temperature = 0.0;                      // Initialize flight data structure temperature float to 0 celsius.
   flightData.battery_voltage = 0.0;                  // Initialize flight data structure battery voltage float to 0.0 V.
@@ -227,23 +231,88 @@ static void loonarCode ()
   flightData.minutes = getTime();                         // Acquire the current time since startup of the electronics. 
   flightData.latitude = getLatitude();                    // Parse the latitude data from the GPS.
   flightData.longitude = getLongitude();                  // Parse the longitude data from the GPS. 
+  flightData.last_altitude = flightData.altitude;         // Store the last altitude float variable. 
   flightData.altitude = getAltitude();                    // Parse the altitude data from the GPS.
   if (flightData.altitude > flightData.max_altitude)
   {
-    flightData.max_altitude = flightData.altitude;
+    flightData.max_altitude = flightData.altitude;        // Get the max altitude achieved. 
   }
   flightData.bmp_temperature = bmp.readTemperature();     // Read the temperature from the BMP280 sensor. 
   flightData.bmp_altitude = bmp.readAltitude();           // Read the altitude from the BMP280 pressure sensor.
   flightData.temperature = getTemp();                     // Acquire the temperature from the built in sensor from the radio chip.
   flightData.battery_voltage = getBatteryVoltage();       // Measure the voltage of the batteries. 
   flightData.supercap_voltage = getSuperCapVoltage();     // Measure the voltage of the expansion board supercapacitor. 
+  flightData.ascent_rate = getAscentRate();
+  checkIfLanded();                                        // Check if the balloon has landed.
   getConfiguredData();                                    // Configure the data we want to transmit via Iridium and/or RF.
   logToSDCard();                                          // Log all data to the SD Card.
-  printToSerial();
+  printToSerial();                                        // Print everything to the serial monitor. 
   checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
   transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
   transceiveIridium();                                    // Transmit and receive telemetry via the Iridium modem. 
 }
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     getAscentRate
+   Parameters:
+     None
+   Returns:
+     Float representing ascent rate of the balloon.
+   Purpose: 
+     Calculates the averaged ascent rate of the payload. 
+--------------------------------------------------------------------------------------------------------------*/
+static float getAscentRate()
+{
+  static float ascent_rate_array[25] = {0.0};
+  static uint8_t ctr = 0;
+  ascent_rate_array[ctr] = (float)(flightData.altitude - flightData.last_altitude)/((float)INTERVAL_TIME/1000000.0);
+  ctr++;
+  if (ctr >= 25) 
+  {
+    ctr = 0;
+  }
+  float ascent_rate = 0.0;
+  for (int i = 0; i < 25; i++)
+  {
+    ascent_rate += ascent_rate_array[i];
+  }
+  ascent_rate /= 25.0;
+  return ascent_rate;
+}
+
+
+
+/*--------------------------------------------------------------------------------------------------------------
+   Function:
+     checkIfLanded
+   Parameters:
+     None
+   Returns:
+     None.
+   Purpose: 
+     Checks to see if the payload has landed, and then changes loop time for Iridium to conserve power. 
+--------------------------------------------------------------------------------------------------------------*/
+static void checkIfLanded() 
+{
+  if (!flightData.landed)
+  {
+    if ( (flightData.altitude < 7000.0) 
+    &&   (flightData.altitude < (flightData.max_altitude - 5000.0)) 
+    &&   (flightData.ascent_rate < abs(0.20)))
+    {
+      flightData.landed = true;
+    }
+  }
+
+  if (flightData.landed)
+  {
+    IRIDIUM_LOOP_TIME = 15.0;
+    INTERVAL_TIME = 100000000; 
+  }
+}
+
 
 
 /*--------------------------------------------------------------------------------------------------------------
@@ -256,7 +325,8 @@ static void loonarCode ()
    Purpose: 
      Acquires the current time since startup of the teensy. 
 --------------------------------------------------------------------------------------------------------------*/
-static double getTime(){
+static double getTime()
+{
   return (double) (millis() - flightData.startTime)/1000.0/60.0;  // Acquire the current time since startup of the electronics. 
 }
 
@@ -378,18 +448,18 @@ static void cutdownBalloon()
 static void getConfiguredData()
 {
   char data[BUF_SIZE] = "";
-  sprintf(data, "%.4f, %.4f, %.1f, %.1f, %.1f, %.1f, %.1f, %.1f, %d, %d, %ld,,", 
+  sprintf(data, "%.4f, %.4f, %.1f, %.1f, %.1f, %.1f, %d, %d, %ld, %.1f, %.1f,,", 
     flightData.latitude, 
     flightData.longitude, 
     flightData.altitude, 
-    flightData.bmp_altitude, 
-    flightData.bmp_temperature, 
     flightData.temperature,
     flightData.battery_voltage, 
     flightData.supercap_voltage, 
     flightData.cutdown,
     flightData.landed,
-    flightData.counter);
+    flightData.counter,
+    flightData.bmp_altitude, 
+    flightData.bmp_temperature);
   
   Serial.print("Final configured data before transmission: ");
   for (int i = 0; i < BUF_SIZE; i++)
@@ -415,18 +485,51 @@ static void getConfiguredData()
 --------------------------------------------------------------------------------------------------------------*/
 static void transceiveRF() 
 {   
+  // If it is time to send our FCC ID as per law, send it
   if ((flightData.counter % FCC_ID_INTERVAL) == 0)
   {
     rf24.send(FCCID, arr_len(FCCID));
     rf24.waitPacketSent(); 
   }
+
+  // Send the contents of the flight data array
   rf24.send(flightData.finaldata, arr_len(flightData.finaldata));
   rf24.waitPacketSent();
+
+  // Time to parse messages. 
   uint8_t data[BUF_SIZE] = {0};
   uint8_t leng = BUF_SIZE;
+
+  // Check to see if there is a received message. 
   if (rf24.recv(data, &leng))
   {
-    messageReceived(data, leng); 
+    // Check to see if the incoming message is a cutdown command. 
+    boolean shouldCutdown = true;
+    Serial.println("Incoming Potential Cutdown Message: ");
+    for (size_t i = 0; i < arr_len(CUTDOWN_COMMAND); i++)
+    {
+      Serial.print(data[i]);
+      if(data[i] != CUTDOWN_COMMAND[i]) 
+      {
+        shouldCutdown = false;
+      }
+    }
+    
+    Serial.println();
+
+    // If the cutdown command has been parsed correctly, cutdown the balloon.
+    if (shouldCutdown && (CUTDOWN_CONFIG == 4 || CUTDOWN_CONFIG == 5)) 
+    {
+      cutdownBalloon();
+    }
+
+    
+
+    // If the message is not a loonar message, send it to the user messageReceived function
+    if (!shouldCutdown)
+    {
+      messageReceived(data, leng); 
+    }
   }
 }
 
@@ -444,28 +547,70 @@ static void transceiveRF()
 static void transceiveIridium() 
 { 
   noInterrupts(); // Turns off interrupts so we can transmit our message via Iridium.
+  
+  // If it is time to send and receive iridium messages
   if (flightData.minutes > flightData.iridiumTime) 
   {
+    // Get the array length of our flight data. 
     size_t bufferSize = arr_len(flightData.finaldata);
+
+    // Send and receive data through the Iridium network.
     isbd.sendReceiveSBDBinary(flightData.finaldata, BUF_SIZE, flightData.finaldata, bufferSize);
     char rxBuf [bufferSize];
+
+    // Increment time for next Iridium transmission. 
     flightData.iridiumTime += IRIDIUM_LOOP_TIME;
+
+    // If there is an incoming message
     if (bufferSize > 0) 
     {
+      // Parse the received message to see if there was a cutdown command
       boolean shouldCutdown = true;
+      Serial.println("Incoming Potential Cutdown Message: ");
       for (size_t i = 0; i < bufferSize; i++)
       {
         rxBuf[i] = flightData.finaldata[i];
+        Serial.print(rxBuf[i]);
         if(rxBuf[i] != CUTDOWN_COMMAND[i]) 
         {
           shouldCutdown = false;
         }
       }
+      Serial.println();
+
+      // If the cutdown command has been parsed correctly, cutdown the balloon.
       if (shouldCutdown && (CUTDOWN_CONFIG == 4 || CUTDOWN_CONFIG == 5)) 
       {
         cutdownBalloon();
       }
-      messageReceived(flightData.finaldata, (uint8_t)bufferSize);
+
+      // Parse the received message to see if there was a "landed" command
+      boolean landed_copy_0 = true;
+      boolean landed_copy = flightData.landed;
+      flightData.landed = true;
+      Serial.println("Incoming Potential 'Landed' Message: ");
+      for (size_t i = 0; i < bufferSize; i++)
+      {
+        rxBuf[i] = flightData.finaldata[i];
+        Serial.print(rxBuf[i]);
+        if(rxBuf[i] != LANDED_COMMAND[i]) 
+        {
+          flightData.landed = false;
+          landed_copy_0 = false; 
+        }
+      }
+      Serial.println();
+      
+      if (!flightData.landed)
+      {
+        flightData.landed = landed_copy;
+      }
+
+     
+      if (!shouldCutdown && !landed_copy_0)
+      {
+        messageReceived(flightData.finaldata, (uint8_t)bufferSize);
+      }
     }
   }
   interrupts(); // Turn interrupts back on. 
@@ -610,6 +755,7 @@ static void printLogfileHeaders()
   logfile.print("Lat,");
   logfile.print("Long, ");
   logfile.print("Alt (m), ");
+  logfile.print("Asc Rate (m/s), ");
   logfile.print("Max Alt (m), ");
   logfile.print("Alt_Bar (m), ");
   logfile.print("Temp_Bar (C), ");
@@ -644,6 +790,8 @@ static void logToSDCard()
   logfile.print(flightData.longitude);
   logfile.print(",");
   logfile.print(flightData.altitude);
+  logfile.print(",");
+  logfile.print(flightData.ascent_rate);
   logfile.print(",");
   logfile.print(flightData.max_altitude);
   logfile.print(",");
@@ -692,6 +840,9 @@ static void printToSerial() {
   Serial.print(", ");
   Serial.print("Alt: ");
   Serial.print(flightData.altitude);
+  Serial.print(", ");
+  Serial.print("Ascent Rate: ");
+  Serial.print(flightData.ascent_rate);
   Serial.print(", ");
   Serial.print("Max Alt: ");
   Serial.print(flightData.max_altitude);
