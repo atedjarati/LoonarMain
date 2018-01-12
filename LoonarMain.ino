@@ -29,10 +29,10 @@ Copyright 2018 Loonar Technologies, LLC
 /***********************************************************************************************************************************************************************/
 
 /********* LIBRARIES *********/
-#include <stdio.h>                 // Standard library
 #include <SD.h>                    // SD Card library
-#include "TinyGPSPlusPlus.h"       // GPS Parser Library
 #include <SPI.h>                   // Serial Peripheral Interface Library
+#include <stdio.h>                 // Standard library
+#include "TinyGPSPlusPlus.h"       // GPS Parser Library
 #include "i2ct3.h"                 // Teensy I2C Library
 #include "AdafruitSensor.h"        // Adafruit sensor libraries
 #include "AdafruitBMP280.h"        // BMP280 Library
@@ -154,18 +154,21 @@ void messageReceived (uint8_t finaldata[], uint8_t leng){
 --------------------------------------------------------------------------------------------------------------*/
 void setup()
 {
-  init_GPIO_chip();                                  // Initialize the GPIO Expansion chip over I2C with the teensy i2c library integrated already into this.
+  delay(1000);
+  Serial.begin(9600);
+  //init_GPIO_chip();                                  // Initialize the GPIO Expansion chip over I2C with the teensy i2c library integrated already into this.
+  Serial.println("Stuck here");
   setPinmodes();                                     // Initialize all the pinModes for every pin (i.e. input, output, etc).
   RadioOff();                                        // Shut off power to the radio.
-  IridiumOff();                                      // Shut off power to the Iridium modem
-  CameraOff();                                       // Shut off power to the camera.
-  FiveVOff();                                        // Shut off the 5 volt line.
-  GPSOff();                                          // Shut off power to the GPS.
-  CutdownOff();                                      // Shut off power to cutdown. 
-  CameraDeTrigger();                                 // De-trigger the camera (drive high).
+  //IridiumOff();                                      // Shut off power to the Iridium modem
+  //CameraOff();                                       // Shut off power to the camera.
+  //FiveVOff();                                        // Shut off the 5 volt line.
+  //GPSOff();                                          // Shut off power to the GPS.
+  //CutdownOff();                                      // Shut off power to cutdown. 
+  //CameraDeTrigger();                                 // De-trigger the camera (drive high).
   analogReadResolution(ADC_RESOLUTION);              // Set the ADC resolution to appropriate number of bits for maximum resolution
   analogReference(EXTERNAL);                         // Set the ADC reference voltage to the externally supplied 3.3V reference. 
-  checkCallsign();                                   // Make sure user entered a correct FCC Callsign. 
+  //checkCallsign();                                   // Make sure user entered a correct FCC Callsign. 
   flightData.latitude = LAUNCH_LATITUDE;             // Initialize flight data structure latitude float to the launch site latitude. 
   flightData.longitude = LAUNCH_LONGITUDE;           // Initialize flight data structure longitude float to the launch site longitude. 
   flightData.last_altitude = 0.0;                    // Initialize flight data structure last altitude float to 0 meters.
@@ -183,15 +186,16 @@ void setup()
   setupSDCard();                                     // Configure the SD card and set up the log file. 
   printLogfileHeaders();                             // Write headers to the log file.
   init_bmp();                                        // Initialize the BMP 280 Pressure/Temperature sensor.
-  GPSOn();                                           // Turn on power to the GPS.
-  setGPSFlightMode();                                // Configure the GPS for flight mode to work at high altitudes.
+  //GPSOn();                                           // Turn on power to the GPS.
+  //setGPSFlightMode();                                // Configure the GPS for flight mode to work at high altitudes.
   initRF();                                          // Turn on and initialize the Radio module.
-  chargeSuperCapacitor();                            // Charge the supercapacitor up.  
-  initIridium();                                     // Turn on the 5 volt line, give power to the Iridium module, and begin talking to it.
-  initCameraVideo();                                 // Give power to the camera, then trigger the camera line to start video. 
-  userSetupCode();                                   // Call the user setup function code. 
+  //chargeSuperCapacitor();                            // Charge the supercapacitor up.  
+  //initIridium();                                     // Turn on the 5 volt line, give power to the Iridium module, and begin talking to it.
+  //initCameraVideo();                                 // Give power to the camera, then trigger the camera line to start video. 
+  //userSetupCode();                                   // Call the user setup function code. 
   flightData.startTime = millis();                   // Initializes the start time of the entire program. 
-  loonarInterrupt.begin(loonarCode, INTERVAL_TIME);  // Start the interrupt timer to run the entire loonar technologies program. 
+  //loonarInterrupt.begin(loonarCode, INTERVAL_TIME);  // Start the interrupt timer to run the entire loonar technologies program. 
+  Serial.println("Got here");
 }
 
 /***********************************************************************************************************************************************************************/
@@ -210,6 +214,8 @@ void setup()
 void loop()
 {
   userLoopCode();
+  loonarCode();
+  delay(1000);
 }
 
 /***********************************************************************************************************************************************************************/
@@ -243,13 +249,13 @@ static void loonarCode ()
   flightData.battery_voltage = getBatteryVoltage();       // Measure the voltage of the batteries. 
   flightData.supercap_voltage = getSuperCapVoltage();     // Measure the voltage of the expansion board supercapacitor. 
   flightData.ascent_rate = getAscentRate();
-  checkIfLanded();                                        // Check if the balloon has landed.
-  getConfiguredData();                                    // Configure the data we want to transmit via Iridium and/or RF.
-  logToSDCard();                                          // Log all data to the SD Card.
+  //checkIfLanded();                                        // Check if the balloon has landed.
+  //getConfiguredData();                                    // Configure the data we want to transmit via Iridium and/or RF.
+  //logToSDCard();                                          // Log all data to the SD Card.
   printToSerial();                                        // Print everything to the serial monitor. 
-  checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
-  transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
-  transceiveIridium();                                    // Transmit and receive telemetry via the Iridium modem. 
+  //checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
+  //transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
+  //transceiveIridium();                                    // Transmit and receive telemetry via the Iridium modem. 
 }
 
 
@@ -495,7 +501,7 @@ static void transceiveRF()
   // Send the contents of the flight data array
   rf24.send(flightData.finaldata, arr_len(flightData.finaldata));
   rf24.waitPacketSent();
-
+/*
   // Time to parse messages. 
   uint8_t data[BUF_SIZE] = {0};
   uint8_t leng = BUF_SIZE;
@@ -530,7 +536,7 @@ static void transceiveRF()
     {
       messageReceived(data, leng); 
     }
-  }
+  }*/
 }
 
 
@@ -713,13 +719,16 @@ static void initIridium()
 --------------------------------------------------------------------------------------------------------------*/
 static void initRF() 
 {
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setClockDivider(SPI_CLOCK_DIV2);  // Setting clock speed to 8mhz, as 10 is the max for the rfm22
-  SPI.begin(); 
+  //SPI.setDataMode(SPI_MODE0);
+  //SPI.setClockDivider(SPI_CLOCK_DIV2);  // Setting clock speed to 8mhz, as 10 is the max for the rfm22
+  //SPI.begin(); 
   RadioOn();
   boolean ok = rf24.init(BUF_SIZE);
   if (!ok) Serial.println("Unplug and replug the Loonar Mainboard");
   rf24.setFrequency(FREQ); 
+  delay(1000);
+  rf24.send(FCCID, arr_len(FCCID));
+  rf24.waitPacketSent();
 }
 
 
@@ -735,7 +744,7 @@ static void initRF()
 --------------------------------------------------------------------------------------------------------------*/
 static void init_GPIO_chip()
 {
-  GPIO_chip.begin();
+  GPIO_chip.begin(0);
 }
 
 
@@ -820,7 +829,7 @@ static void logToSDCard()
 
 /*--------------------------------------------------------------------------------------------------------------
    Function:
-     printToSerial
+     pral
    Parameters:
      None
    Returns:
@@ -829,53 +838,69 @@ static void logToSDCard()
      Prints all relevant flight data to the Serial Monitor. 
 --------------------------------------------------------------------------------------------------------------*/
 static void printToSerial() {
+  double minutes = flightData.minutes;
+  float latitude = flightData.latitude;
+  float longitude = flightData.longitude;
+  float altitude = flightData.altitude;
+  float ascent_rate = flightData.ascent_rate;
+  float max_altitude = flightData.max_altitude;
+  float bmp_altitude = flightData.bmp_altitude;
+  float bmp_temperature = flightData.bmp_temperature;
+  float temperature = flightData.temperature;
+  float battery_voltage = flightData.battery_voltage;
+  float supercap_voltage = flightData.supercap_voltage;
+  boolean cutdown = flightData.cutdown;
+  boolean landed = flightData.landed;
+  double startTime = flightData.startTime;
+  double iridiumTime = flightData.iridiumTime;
+  long counter = flightData.counter;
   Serial.print("Time: ");
-  Serial.print(flightData.minutes);
+  Serial.print(minutes);
   Serial.print(", ");
   Serial.print("Lat: ");
-  Serial.print(flightData.latitude);
+  Serial.print(latitude);
   Serial.print(", ");
   Serial.print("Long: ");
-  Serial.print(flightData.longitude);
+  Serial.print(longitude);
   Serial.print(", ");
   Serial.print("Alt: ");
-  Serial.print(flightData.altitude);
+  Serial.print(altitude);
   Serial.print(", ");
   Serial.print("Ascent Rate: ");
-  Serial.print(flightData.ascent_rate);
+  Serial.print(ascent_rate);
   Serial.print(", ");
   Serial.print("Max Alt: ");
-  Serial.print(flightData.max_altitude);
+  Serial.print(max_altitude);
   Serial.print(", ");
   Serial.print("BMP Alt: ");
-  Serial.print(flightData.bmp_altitude);
+  Serial.print(bmp_altitude);
   Serial.print(", ");
   Serial.print("BMP Temp: ");
-  Serial.print(flightData.bmp_temperature);
+  Serial.print(bmp_temperature);
   Serial.print(", ");
   Serial.print("Temp: ");
-  Serial.print(flightData.temperature);
+  Serial.print(temperature);
   Serial.print(", ");
   Serial.print("BatV: ");
-  Serial.print(flightData.battery_voltage);
+  Serial.print(battery_voltage);
   Serial.print(", ");
   Serial.print("CapV: ");
-  Serial.print(flightData.supercap_voltage);
+  Serial.print(supercap_voltage);
   Serial.print(", ");
   Serial.print("Cut: ");
-  Serial.print(flightData.cutdown);
+  Serial.print(cutdown);
   Serial.print(", ");
   Serial.print("Land: ");
-  Serial.print(flightData.landed);
+  Serial.print(landed);
   Serial.print(", ");
   Serial.print("Start: ");
-  Serial.print(flightData.startTime);
+  Serial.print(startTime);
   Serial.print(", ");
   Serial.print("Iridium: ");
-  Serial.print(flightData.iridiumTime);
+  Serial.print(iridiumTime);
   Serial.print(", ");
   Serial.print("RF Count: ");
-  Serial.println(flightData.counter);
+  Serial.println(counter);
 }
 
 
@@ -892,6 +917,8 @@ static void printToSerial() {
 static void init_bmp() 
 {
   bmp.begin();
+  //Serial.println(bmp.readTemperature()); 
+  //Serial.println(bmp.readAltitude()); 
 }
 
 
@@ -905,15 +932,20 @@ static void init_bmp()
    Purpose: 
      Creates the SD Card log file.  
 --------------------------------------------------------------------------------------------------------------*/
-static void setupSDCard() 
+void setupSDCard() 
 {
-  SD.begin(SD_CS);
-  char filename[] = "LOGGER000.CSV";
+  if (!SD.begin(SD_CS)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    return;
+  }
+  Serial.println("card initialized.");
+  char filename[] = "LOG000.csv";
   for (uint8_t i = 0; i < 1000; i++) 
   {
-    filename[6] = (i / 100) + '0';
-    filename[7] = (i / 10) % 10 + '0';
-    filename[8] = (i % 10) + '0';
+    filename[3] = (i / 100) + '0';
+    filename[4] = (i / 10) % 10 + '0';
+    filename[5] = (i % 10) + '0';
     if (! SD.exists(filename)) // only open a new file if it doesn't exist
     {   
       logfile = SD.open(filename, FILE_WRITE);
@@ -941,18 +973,19 @@ static void setupSDCard()
    Purpose: 
      Sets up the pinmodes for all of the control pins, ADC's, and also begins all the Serial Communication. 
 --------------------------------------------------------------------------------------------------------------*/
-static void setPinmodes()
+void setPinmodes()
 {
   pinMode(GFSK_GATE, OUTPUT);
-  pinMode(CS_BMP, OUTPUT);
-  pinMode(SD_CS, OUTPUT);
-  pinMode(RB_SLEEP, OUTPUT);
-  GPIO_chip.pinMode(GPS_GATE,OUTPUT);
+  //pinMode(CS_BMP, OUTPUT);
+  //pinMode(SD_CS, OUTPUT);
+  //pinMode(RB_SLEEP, OUTPUT);
+  pinMode(10,OUTPUT);
+  /*GPIO_chip.pinMode(GPS_GATE,OUTPUT);
   GPIO_chip.pinMode(EN_5V,OUTPUT);
   GPIO_chip.pinMode(RB_GATE,OUTPUT);
   GPIO_chip.pinMode(CAM_GATE,OUTPUT);
   GPIO_chip.pinMode(CAM_CTRL,OUTPUT);
-  GPIO_chip.pinMode(CUT_GATE,OUTPUT);
+  GPIO_chip.pinMode(CUT_GATE,OUTPUT);*/
   //GPIO_chip.pinMode(BREAKOUT_5,OUTPUT);
   pinMode(VCAP_SENSE, INPUT);
   pinMode(VBAT_SENSE, INPUT);
