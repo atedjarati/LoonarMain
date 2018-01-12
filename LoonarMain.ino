@@ -232,8 +232,9 @@ void loop()
      this data to the radio module and the iridium module, and finally logging all data onboard.  This function
      gets called on an interrupt using the IntervalTimer function built into the Teensy LC. 
 --------------------------------------------------------------------------------------------------------------*/
-static void loonarCode ()
+void loonarCode ()
 {
+  smartdelay(500);
   flightData.minutes = getTime();                         // Acquire the current time since startup of the electronics. 
   flightData.latitude = getLatitude();                    // Parse the latitude data from the GPS.
   flightData.longitude = getLongitude();                  // Parse the longitude data from the GPS. 
@@ -251,7 +252,7 @@ static void loonarCode ()
   flightData.ascent_rate = getAscentRate();
   //checkIfLanded();                                        // Check if the balloon has landed.
   //getConfiguredData();                                    // Configure the data we want to transmit via Iridium and/or RF.
-  //logToSDCard();                                          // Log all data to the SD Card.
+  logToSDCard();                                          // Log all data to the SD Card.
   printToSerial();                                        // Print everything to the serial monitor. 
   //checkCutdown();                                         // Check to see if the conditions call for cutting down the balloon.
   //transceiveRF();                                         // Transmit and receive telemetry via the radio module. 
@@ -727,8 +728,10 @@ static void initRF()
   if (!ok) Serial.println("Unplug and replug the Loonar Mainboard");
   rf24.setFrequency(FREQ); 
   delay(1000);
+  while(1){
   rf24.send(FCCID, arr_len(FCCID));
   rf24.waitPacketSent();
+}
 }
 
 
@@ -980,8 +983,8 @@ void setPinmodes()
   //pinMode(SD_CS, OUTPUT);
   //pinMode(RB_SLEEP, OUTPUT);
   pinMode(10,OUTPUT);
-  /*GPIO_chip.pinMode(GPS_GATE,OUTPUT);
-  GPIO_chip.pinMode(EN_5V,OUTPUT);
+  //GPIO_chip.pinMode(GPS_GATE,OUTPUT);
+  /*GPIO_chip.pinMode(EN_5V,OUTPUT);
   GPIO_chip.pinMode(RB_GATE,OUTPUT);
   GPIO_chip.pinMode(CAM_GATE,OUTPUT);
   GPIO_chip.pinMode(CAM_CTRL,OUTPUT);
@@ -1357,9 +1360,9 @@ void setGPSFlightMode()
    Purpose: 
      Acquires the current GPS latitude.
 --------------------------------------------------------------------------------------------------------------*/
-static float getLatitude()
+float getLatitude()
 {
-  smartdelay(GPS_ACQUISITION_TIME);
+  //smartdelay(GPS_ACQUISITION_TIME);
   return tinygps.location.lat(); 
 }
 
@@ -1374,9 +1377,9 @@ static float getLatitude()
    Purpose: 
      Acquires the current GPS longitude.
 --------------------------------------------------------------------------------------------------------------*/
-static float getLongitude()
+float getLongitude()
 {
-  smartdelay(GPS_ACQUISITION_TIME);
+  //smartdelay(GPS_ACQUISITION_TIME);
   return tinygps.location.lng(); 
 }
 
@@ -1391,9 +1394,9 @@ static float getLongitude()
    Purpose: 
      Acquires the current GPS Altitude in meters.  
 --------------------------------------------------------------------------------------------------------------*/
-static float getAltitude()
+float getAltitude()
 {
-  smartdelay(GPS_ACQUISITION_TIME);
+  //smartdelay(GPS_ACQUISITION_TIME);
   return tinygps.altitude.meters(); 
 }
 
@@ -1408,12 +1411,13 @@ static float getAltitude()
    Purpose: 
      Reads and parses the GPS datastream for the allotted time passed in.
 --------------------------------------------------------------------------------------------------------------*/
-static void smartdelay(unsigned long ms) 
+void smartdelay(unsigned long ms) 
 {
+  Serial.println("SmartDelay");
   unsigned long timing = millis();
   do 
   {
-    while (hsGPS.available()) 
+    if (hsGPS.available()) 
     {  
       char a = hsGPS.read();
       tinygps.encode(a);
