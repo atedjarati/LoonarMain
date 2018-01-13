@@ -44,7 +44,7 @@ void RH_RF24::setIdleMode(uint8_t idleMode)
 
 bool RH_RF24::init(uint8_t msg_len)
 {
-    Serial.println("Loonar Technologies Custom Radio File Starting");
+    //Serial.println("Loonar Technologies Custom Radio File Starting");
     if (!RHSPIDriver::init())
 	return false;
 

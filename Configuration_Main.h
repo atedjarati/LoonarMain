@@ -48,7 +48,7 @@ const int BREAKOUT_6 =                 3;    // Breakout pin #6 - Digital input/
 
 /********** USER DEFINED CONSTANTS **********/
 const double   FREQ =                  145.0;                        // Center frequency in MHz for the radio module.
-const uint8_t  FCCID[6] =              {'A','B','C','D','E','F'};    // FCC Radio License Callsign.
+const uint8_t  FCCID[6] =              {'K','K','6','M','I','S'};    // FCC Radio License Callsign.
 const char     CUTDOWN_COMMAND[] =     {"CutdownBalloon"};           // Cutdown Command to be sent over radio/iridium communications.
 const uint8_t  CUTDOWN_CONFIG =        0;                            // 0 for no cutdown, 1 for altitude cutdown, 2 for time cutdown, 3 for GPS fencing cutdown, 4 for Iridium cutdown, 5 for all. 
 const float    CUTDOWN_ALTITUDE =      25000.0;                      // Altitude at which cutdown will occur. 
